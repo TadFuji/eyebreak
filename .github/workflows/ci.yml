@@ -1,0 +1,22 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-and-selfcheck:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # No -O: the self-check's asserts must stay alive.
+      - name: Build
+        run: swiftc -o eyebreak main.swift
+
+      - name: Self-check
+        run: ./eyebreak --selfcheck
+
+      - name: Shell syntax check
+        run: bash -n build.sh
