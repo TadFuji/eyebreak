@@ -9,7 +9,7 @@ jobs:
   build-and-selfcheck:
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       # No -O: the self-check's asserts must stay alive.
       - name: Build
