@@ -115,7 +115,15 @@ final class App: NSObject, NSApplicationDelegate {
 
     func fire() { if !screenUnavailable { startBreak() } }
 
-    @objc func snooze() { schedule(3600) }
+    // One-shot: resume the normal cadence an hour later. (A repeating 3600s
+    // timer would silently turn the app into an hourly reminder forever.)
+    @objc func snooze() {
+        mainTimer?.invalidate()
+        let t = Timer(timeInterval: 3600, repeats: false) { [weak self] _ in self?.schedule(interval) }
+        t.tolerance = 60
+        RunLoop.main.add(t, forMode: .common)
+        mainTimer = t
+    }
     @objc func quit() { NSApp.terminate(nil) }
 
     // ===== Break =====
@@ -155,7 +163,8 @@ final class App: NSObject, NSApplicationDelegate {
         guard tickTimer != nil else { return }
         tickTimer?.invalidate(); tickTimer = nil
         if let h = hotKey { UnregisterEventHotKey(h); hotKey = nil }
-        let hold = playedChime ? 1.6 : 0.0
+        schedule(interval)   // the 20-minute clock counts from the end of the last break
+        let hold = playedChime ? 2.0 : 0.0   // > 1.845s: let the chime tail ring out
         DispatchQueue.main.asyncAfter(deadline: .now() + hold) { [weak self] in
             guard let self, self.tickTimer == nil else { return }
             self.panel?.orderOut(nil)
