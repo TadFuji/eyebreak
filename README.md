@@ -93,6 +93,11 @@ Decisions an engineer might wonder about:
   plain `KeepAlive = true`, launchd resurrects the app the instant you quit
   it — the classic "unkillable app" bug.
 
+- **The 20-minute clock restarts at the end of every break**, so a manual
+  break or an Esc-skip never collides with the old cycle phase. "Pause for
+  1 hour" is a one-shot: it resumes the normal 20-minute cadence an hour
+  later, rather than silently turning the app into an hourly reminder.
+
 - **The countdown is a pure state machine** (`Countdown`) ticking at 0.5 s:
   odd ticks beep, even ticks repaint the label, so beep #20 lands half a
   second *before* the chime as an upbeat. Being pure, it's exactly what the
