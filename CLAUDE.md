@@ -33,8 +33,8 @@ that ordering.
 
 ## Architecture
 
-The entire app is `main.swift` (~210 lines), on purpose: no Xcode project, no
-SwiftPM, no dependencies, no bundled assets. The file must keep the name
+The entire app is `main.swift`, on purpose: no Xcode project, no SwiftPM, no
+dependencies, no bundled assets. The file must keep the name
 `main.swift` — swiftc only allows top-level statements there (any other name
 requires `@main` + `-parse-as-library`).
 
@@ -44,8 +44,8 @@ heredocs in `build.sh`.
 
 Layout of `main.swift`, top to bottom:
 
-- **Knobs** — five named constants (interval, volumes, chime notes/timing).
-  User-facing tuning happens here and nowhere else.
+- **Knobs** — the named constants at the top (interval, volumes, chime
+  notes/timing). User-facing tuning happens here and nowhere else.
 - **`Countdown`** — pure state machine ticking at 0.5 s: odd ticks beep
   (1–20), even ticks repaint the label (19→0), tick 38 pre-warms the audio
   engine, tick 40 fires the chime. Beep #20 lands 0.5 s *before* the chime as
@@ -90,6 +90,16 @@ Layout of `main.swift`, top to bottom:
   unkillable from its own menu.
 - The panel's origin is recomputed on every break — display arrangements
   change between breaks; never cache an `NSScreen`.
+
+## Releasing
+
+```sh
+git tag -a vX.Y.Z -m "Short summary" && git push origin vX.Y.Z
+gh release create vX.Y.Z --title "vX.Y.Z" --notes "..."
+```
+
+The Releases page is the changelog — there is deliberately no CHANGELOG.md.
+Describe user-visible behavior changes in the release notes.
 
 ## Docs
 
