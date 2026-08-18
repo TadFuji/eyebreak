@@ -5,11 +5,11 @@ import Carbon.HIToolbox
 
 // ===== Knobs =====
 let interval = ProcessInfo.processInfo.environment["EYEBREAK_INTERVAL"].flatMap(Double.init) ?? 20 * 60
-let beepVolume: Float = 0.35
-let accentVolume: Float = 0.60          // last 3 beeps: "3 seconds left" without looking at the screen
+let beepVolume: Float = 0.45
+let accentVolume: Float = 0.75          // last 3 beeps: "3 seconds left" without looking at the screen
 let chimeNotes: [Double] = [698.46, 880.00, 1046.50, 1396.91]   // F5 A5 C6 F6 — F5 matches Tink's pitch
 let chimeIOI = 0.09, chimeTau = 0.09, chimeTailTau = 0.35
-let chimeGain: Float = 0.28
+let chimeGain: Float = 0.34
 let chimeFormat = AVAudioFormat(standardFormatWithSampleRate: 48000, channels: 1)!
 
 // ===== Countdown state machine — ticks every 0.5s, 40 ticks = 20s =====
@@ -132,7 +132,7 @@ final class App: NSObject, NSApplicationDelegate {
         countdown = Countdown()
         label.stringValue = "遠くを見て  20"
         showPanel()
-        cue?.volume = 0.5
+        cue?.volume = 0.65
         cue?.play()
         RegisterEventHotKey(UInt32(kVK_Escape), 0,
                             EventHotKeyID(signature: OSType(0x4559_4542), id: 1),

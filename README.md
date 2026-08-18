@@ -112,7 +112,7 @@ swiftc -o eyebreak main.swift && ./eyebreak --selfcheck
 The self-check asserts the whole contract: exactly 20 beeps numbered 1–20,
 labels 19→0 with no gaps, exactly one chime that never collides with a beep,
 the accent on precisely the last 3 beeps — and, on the synthesized buffer:
-correct length, no clipping (peak ≈ 0.40), fully decayed tail (no click), and
+correct length, no clipping (peak ≈ 0.49), fully decayed tail (no click), and
 a zero-crossing measurement proving the first note really is F5 (±25 Hz).
 CI runs this on every push. `build.sh` runs it before every install.
 
