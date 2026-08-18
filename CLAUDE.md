@@ -52,7 +52,7 @@ Layout of `main.swift`, top to bottom:
   an upbeat. Being pure, it is what `selfCheck()` exercises headlessly.
 - **`Chime`** — AVAudioEngine synth. `Chime.buffer()` is static/pure so the
   self-check can validate the rendered audio without an output device.
-- **`App`** — NSApplicationDelegate: status item + menu, the two timers, the
+- **`App`** — NSApplicationDelegate: Dock icon + Dock menu, the two timers, the
   notification-style NSPanel, the Carbon hotkey.
 - **`selfCheck()`** — the only test. It gates every `build.sh` install and CI
   (`.github/workflows/ci.yml`, macOS runner). When changing the timing or
@@ -85,6 +85,16 @@ Layout of `main.swift`, top to bottom:
 - **Breaks are skipped when the display is asleep or the screen is locked**
   (`CGDisplayIsAsleep` / `CGSSessionScreenIsLocked`). This is the only idle
   handling; further idle detection is a deliberate non-feature (see README).
+- **Dock tile, not a status item.** `Info.plist` carries no `LSUIElement`, so
+  the app is `.regular` — no `setActivationPolicy` call needed. `buildMenu()`
+  returns a fresh `NSMenu` every time (an `NSMenu` has exactly one supermenu,
+  and the Dock re-asks on every right-click); it feeds both
+  `applicationDockMenu` and the minimal main menu, which exists only so the
+  menu bar isn't empty while the app is active. Quit deliberately has no ⌘Q.
+  The icon is drawn into `NSApp.applicationIconImage` in
+  `applicationWillFinishLaunching` (no bundled asset, no placeholder flash),
+  and `showPanel` calls `unhideWithoutActivation` because the Dock's Hide item
+  is now reachable and a hidden app never shows the panel.
 - **LaunchAgent `KeepAlive = {SuccessfulExit: false}`**: crash → auto-restart,
   menu Quit → stays quit until next login. A plain `true` makes the app
   unkillable from its own menu.

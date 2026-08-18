@@ -1,4 +1,4 @@
-// EyeBreak — 20-20-20 rule reminder. Menu bar agent, no dependencies.
+// EyeBreak — 20-20-20 rule reminder. Dock agent, no dependencies.
 import AppKit
 import AVFoundation
 import Carbon.HIToolbox
@@ -77,26 +77,57 @@ final class App: NSObject, NSApplicationDelegate {
     let chime = Chime()
     let tink = NSSound(named: NSSound.Name("Tink"))
     let cue = NSSound(named: NSSound.Name("Submarine"))
-    let status = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     let label = NSTextField(labelWithString: "")
     var mainTimer: Timer?, tickTimer: Timer?
     var panel: NSPanel?
     var hotKey: EventHotKeyRef?
     var countdown = Countdown()
 
+    // Drawn, not bundled — the app ships no assets. Static/pure like Chime.buffer(),
+    // so selfCheck can render and inspect it headlessly.
+    static func icon() -> NSImage {
+        NSImage(size: NSSize(width: 512, height: 512), flipped: false) { r in
+            NSColor(red: 0.16, green: 0.21, blue: 0.29, alpha: 1).setFill()
+            NSBezierPath(roundedRect: r, xRadius: 115, yRadius: 115).fill()
+            let cfg = NSImage.SymbolConfiguration(pointSize: 300, weight: .regular)
+                .applying(NSImage.SymbolConfiguration(paletteColors: [.white]))
+            guard let eye = NSImage(systemSymbolName: "eye", accessibilityDescription: "EyeBreak")?
+                .withSymbolConfiguration(cfg) else { return true }
+            eye.draw(in: NSRect(x: (r.width - eye.size.width) / 2,
+                                y: (r.height - eye.size.height) / 2,
+                                width: eye.size.width, height: eye.size.height))
+            return true
+        }
+    }
+
+    // Before didFinishLaunching: the generic placeholder tile never flashes.
+    func applicationWillFinishLaunching(_ n: Notification) { NSApp.applicationIconImage = App.icon() }
+
     func applicationDidFinishLaunching(_ n: Notification) {
-        status.button?.image = NSImage(systemSymbolName: "eye", accessibilityDescription: "EyeBreak")
-        let m = NSMenu()
-        m.addItem(withTitle: "今すぐ休憩", action: #selector(startBreak), keyEquivalent: "")
-        m.addItem(withTitle: "1時間停止", action: #selector(snooze), keyEquivalent: "")
-        m.addItem(NSMenuItem.separator())
-        m.addItem(withTitle: "終了（今日はもう鳴らさない）", action: #selector(quit), keyEquivalent: "q")
-        m.items.forEach { $0.target = self }
-        status.menu = m
+        let appItem = NSMenuItem()
+        appItem.submenu = buildMenu()   // a Dock app owns the menu bar while active: don't leave it empty
+        let bar = NSMenu()
+        bar.addItem(appItem)
+        NSApp.mainMenu = bar
 
         installHotKeyHandler()
         schedule(interval)
     }
+
+    // A fresh instance per call: an NSMenu can have only one supermenu, and the
+    // Dock asks for its menu again on every right-click.
+    // No ⌘Q on Quit — it means "silent until next login", too costly to mistype.
+    func buildMenu() -> NSMenu {
+        let m = NSMenu(title: "EyeBreak")
+        m.addItem(withTitle: "今すぐ休憩", action: #selector(startBreak), keyEquivalent: "")
+        m.addItem(withTitle: "1時間停止", action: #selector(snooze), keyEquivalent: "")
+        m.addItem(NSMenuItem.separator())
+        m.addItem(withTitle: "終了（今日はもう鳴らさない）", action: #selector(quit), keyEquivalent: "")
+        m.items.forEach { $0.target = self }
+        return m
+    }
+
+    func applicationDockMenu(_ sender: NSApplication) -> NSMenu? { buildMenu() }
 
     func schedule(_ seconds: TimeInterval) {
         mainTimer?.invalidate()
@@ -204,6 +235,7 @@ final class App: NSObject, NSApplicationDelegate {
         if let vf = NSScreen.main?.visibleFrame {
             panel!.setFrameOrigin(NSPoint(x: vf.maxX - 296, y: vf.maxY - 88))
         }
+        if NSApp.isHidden { NSApp.unhideWithoutActivation() }   // Dock menu > Hide would swallow the panel
         panel!.orderFrontRegardless()    // show without stealing focus from what the user is typing in
     }
 
@@ -253,6 +285,17 @@ func selfCheck() {
 
     assert(NSSound(named: NSSound.Name("Tink")) != nil, "/System/Library/Sounds/Tink.aiff is missing")
     assert(NSSound(named: NSSound.Name("Submarine")) != nil, "/System/Library/Sounds/Submarine.aiff is missing")
+    // The Dock icon is drawn, not bundled: a blank or all-dark tile would ship unnoticed.
+    let tile = NSBitmapImageRep(data: App.icon().tiffRepresentation!)!
+    var lit = 0
+    for y in stride(from: 0, to: tile.pixelsHigh, by: 8) {
+        for x in stride(from: 0, to: tile.pixelsWide, by: 8)
+        where (tile.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB)?.brightnessComponent ?? 0) > 0.9 {
+            lit += 1
+        }
+    }
+    assert(lit > 200, "Dock icon: the white eye glyph did not render (\(lit) light samples of 4096)")
+    assert(tile.colorAt(x: 4, y: 4)?.alphaComponent ?? 1 < 0.5, "Dock icon lost its rounded corners")
     print("selfcheck ok — beeps:\(beeps.count) chime:\(String(format: "%.3f", Double(n) / sr))s f0:\(Int(f0))Hz peak:\(peak)")
 }
 

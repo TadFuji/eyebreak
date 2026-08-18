@@ -4,7 +4,8 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 ![Platform](https://img.shields.io/badge/platform-macOS-lightgrey)
 
-A tiny macOS menu bar app that enforces the **20-20-20 rule**: every 20 minutes,
+A tiny macOS app that sits in the Dock and enforces the **20-20-20 rule**:
+every 20 minutes,
 look at something 20 feet (6 m) away for 20 seconds.
 
 **One Swift file. Zero dependencies. No Xcode project. No notification permission.**
@@ -26,9 +27,9 @@ t = 19.5  Tink #20             your eyes out the window
 t = 20.0  chime F5→A5→C6→F6  — synthesized ascending arpeggio: done
 ```
 
-Press <kbd>Esc</kbd> (or click the panel) to skip a break. The menu bar icon
-offers **Break now**, **Pause for 1 hour**, and **Quit** (quit lasts until your
-next login, then it comes back on its own).
+Press <kbd>Esc</kbd> (or click the panel) to skip a break. Right-click the Dock
+icon for **Break now**, **Pause for 1 hour**, and **Quit** (quit lasts until
+your next login, then it comes back on its own).
 
 ## Install
 
@@ -87,6 +88,16 @@ Decisions an engineer might wonder about:
   (`CGDisplayIsAsleep`, `CGSessionCopyCurrentDictionary`) — nobody needs
   20 beeps aimed at a dark screen at 2 a.m. That's the *only* idle handling;
   deliberate non-features are listed below.
+
+- **A Dock tile, not a menu bar item.** No `LSUIElement` in `Info.plist`, so
+  the app is a regular one; the menu is served by `applicationDockMenu` and the
+  icon is *drawn at launch* from the `eye` SF Symbol onto a rounded tile, so
+  the "no bundled assets" rule still holds. Two honest costs: a Dock tile also
+  appears in ⌘Tab (macOS has no "Dock but not ⌘Tab" policy), and the Dock's own
+  **Hide** becomes reachable — `showPanel` therefore un-hides first, because a
+  hidden app would swallow the break panel. The Dock also appends its own items
+  below ours, so *Quit* is listed twice; both take the same path. Quit carries
+  no ⌘Q: it means "silent until next login", too much to lose to a typo.
 
 - **LaunchAgent with `KeepAlive = {SuccessfulExit: false}`.** Crashes
   auto-restart; a clean Quit from the menu stays quit until next login. With a

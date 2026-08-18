@@ -20,7 +20,6 @@ cat > "$APP/Contents/Info.plist" <<'EOF'
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>1.0</string>
   <key>CFBundleVersion</key><string>1</string>
-  <key>LSUIElement</key><true/>
   <key>NSPrincipalClass</key><string>NSApplication</string>
 </dict></plist>
 EOF
@@ -46,4 +45,4 @@ launchctl enable "$GUI/com.user.eyebreak" 2>/dev/null || true
 launchctl bootstrap "$GUI" "$PLIST"
 sleep 1
 launchctl print "$GUI/com.user.eyebreak" | grep -E "^\s+(state|pid) "
-echo "OK — メニューバーに目のアイコンが出ていれば完了です"
+echo "OK — Dock に目のアイコンが出ていれば完了です"
