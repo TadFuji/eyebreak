@@ -22,11 +22,13 @@ launchctl print gui/$(id -u)/com.user.eyebreak
 cat /tmp/com.user.eyebreak.err
 ```
 
-Never compile with `-O`: `selfCheck()` is `assert`-based and dies silently under
-optimization. `build.sh` deliberately builds unoptimized; the app uses no
-measurable CPU anyway.
+Never compile with `-O`: `selfCheck()` is `assert`-based. A canary makes it
+fail loudly (exit 1) when asserts are compiled out, and `build.sh`
+deliberately builds unoptimized; the app uses no measurable CPU anyway.
 
-`build.sh` boots out the old agent *before* overwriting the binary — replacing a
+`build.sh` builds and self-checks in a temp dir first — a failure leaves the
+installed app and agent untouched and running. Only then does it boot out the
+old agent, *before* moving the verified binary into place — replacing a
 running executable in place gets the process SIGKILLed by code-signature
 verification and launchd's KeepAlive then resurrects it in a crash loop. Keep
 that ordering.
@@ -44,8 +46,9 @@ heredocs in `build.sh`.
 
 Layout of `main.swift`, top to bottom:
 
-- **Knobs** — the named constants at the top (interval, volumes, chime
-  notes/timing). User-facing tuning happens here and nowhere else.
+- **Knobs** — the named constants at the top (interval, the beep/accent/cue
+  volumes, accent count, snooze length, chime notes/timing). User-facing
+  tuning happens here and nowhere else.
 - **`Countdown`** — pure state machine ticking at 0.5 s: odd ticks beep
   (1–20), even ticks repaint the label (19→0), tick 38 pre-warms the audio
   engine, tick 40 fires the chime. Beep #20 lands 0.5 s *before* the chime as
@@ -56,9 +59,13 @@ Layout of `main.swift`, top to bottom:
   notification-style NSPanel, the Carbon hotkey.
 - **`selfCheck()`** — the only test. It gates every `build.sh` install and CI
   (`.github/workflows/ci.yml`, macOS runner). When changing the timing or
-  audio contract, extend it — it asserts beep count/order, label sequence,
-  beep/chime non-collision, accent placement, buffer length, peak (clipping),
-  tail decay, and a zero-crossing measurement of the first chime note (F5).
+  audio contract, extend it — it asserts an asserts-alive canary (catches
+  `-O`), beep count/order, label sequence, beep/chime non-collision, the
+  accent rule (via `beepLevel`, the same function `tick()` plays), buffer
+  length, peak shape and clipping, tail decay, a zero-crossing measurement of
+  the first chime note, the presence of the system sounds, and the drawn Dock
+  icon. Expected values are derived from the Knobs, so tuning them does not
+  break the gate.
 
 ## Load-bearing decisions — do not regress these
 
@@ -82,8 +89,12 @@ Layout of `main.swift`, top to bottom:
 - **Snooze must stay one-shot.** A repeating 3600 s timer silently turned the
   app into a permanent hourly reminder (fixed in ca9b968). `endBreak`
   restarts the 20-minute clock, so every break/skip resets the cycle phase.
+  `snooze()` first ends any break in progress and only then installs its
+  one-shot — in the other order, the running break's `endBreak` would
+  immediately overwrite the snooze timer with the 20-minute clock.
 - **Breaks are skipped when the display is asleep or the screen is locked**
-  (`CGDisplayIsAsleep` / `CGSSessionScreenIsLocked`). This is the only idle
+  (`CGDisplayIsAsleep` / `CGSSessionScreenIsLocked`), and `tick()` re-checks,
+  so a mid-break lock stops the remaining beeps. This is the only idle
   handling; further idle detection is a deliberate non-feature (see README).
 - **Dock tile, not a status item.** `Info.plist` carries no `LSUIElement`, so
   the app is `.regular` — no `setActivationPolicy` call needed. `buildMenu()`

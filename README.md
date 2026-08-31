@@ -41,10 +41,11 @@ cd eyebreak
 bash build.sh
 ```
 
-`build.sh` does everything: compiles `main.swift` into a proper `.app` bundle,
-runs the built-in self-check (the install aborts if it fails), installs to
-`~/Applications/EyeBreak.app`, registers a LaunchAgent for start-at-login, and
-launches it. Safe to re-run any time — it is also the update path.
+`build.sh` does everything: compiles `main.swift` and runs the built-in
+self-check first — if either fails, nothing is installed and any previous
+version keeps running — then installs to `~/Applications/EyeBreak.app`,
+registers a LaunchAgent for start-at-login, and launches it. Safe to re-run
+any time — it is also the update path.
 
 No Gatekeeper dialog appears: locally built binaries never receive the
 `com.apple.quarantine` attribute, and the linker ad-hoc-signs the executable
@@ -86,8 +87,9 @@ Decisions an engineer might wonder about:
 
 - **Breaks are skipped when the display is asleep or the screen is locked**
   (`CGDisplayIsAsleep`, `CGSessionCopyCurrentDictionary`) — nobody needs
-  20 beeps aimed at a dark screen at 2 a.m. That's the *only* idle handling;
-  deliberate non-features are listed below.
+  20 beeps aimed at a dark screen at 2 a.m. The same check runs every
+  half-second during a break, so locking mid-break stops the remaining beeps.
+  That's the *only* idle handling; deliberate non-features are listed below.
 
 - **A Dock tile, not a menu bar item.** No `LSUIElement` in `Info.plist`, so
   the app is a regular one; the menu is served by `applicationDockMenu` and the
@@ -108,6 +110,9 @@ Decisions an engineer might wonder about:
   break or an Esc-skip never collides with the old cycle phase. "Pause for
   1 hour" is a one-shot: it resumes the normal 20-minute cadence an hour
   later, rather than silently turning the app into an hourly reminder.
+  Choosing it while a break is counting down also silences that break on the
+  spot; choosing **Break now** while paused ends the pause (the clock always
+  restarts from the end of a break).
 
 - **The countdown is a pure state machine** (`Countdown`) ticking at 0.5 s:
   odd ticks beep, even ticks repaint the label, so beep #20 lands half a
@@ -125,7 +130,10 @@ labels 19→0 with no gaps, exactly one chime that never collides with a beep,
 the accent on precisely the last 3 beeps — and, on the synthesized buffer:
 correct length, no clipping (peak ≈ 0.49), fully decayed tail (no click), and
 a zero-crossing measurement proving the first note really is F5 (±25 Hz).
-CI runs this on every push. `build.sh` runs it before every install.
+The expected values are derived from the knobs, so tuning the constants at
+the top keeps the check meaningful — and it refuses to pass when asserts are
+compiled out (`-O`). CI runs this on every push. `build.sh` runs it before
+every install.
 
 To try a break without waiting 20 minutes:
 
@@ -141,7 +149,7 @@ EYEBREAK_INTERVAL=5 ~/Applications/EyeBreak.app/Contents/MacOS/EyeBreak
 - No Focus-mode integration (no public API; every workaround breaks across
   macOS updates)
 - No idle detection beyond display-sleep/lock (which absorbs the real cases)
-- No preferences window, statistics, or history — the knobs are five named
+- No preferences window, statistics, or history — the knobs are the named
   constants at the top of `main.swift`
 
 ## Uninstall

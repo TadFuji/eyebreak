@@ -4,12 +4,18 @@ import AVFoundation
 import Carbon.HIToolbox
 
 // ===== Knobs =====
-let interval = ProcessInfo.processInfo.environment["EYEBREAK_INTERVAL"].flatMap(Double.init) ?? 20 * 60
+// Clamped: a mistyped EYEBREAK_INTERVAL=0 would spin the run loop, inf/nan would never fire.
+let rawInterval = ProcessInfo.processInfo.environment["EYEBREAK_INTERVAL"].flatMap(Double.init) ?? 20 * 60
+let interval = rawInterval.isFinite ? min(max(rawInterval, 1), 86400) : 20 * 60
 let beepVolume: Float = 0.45
-let accentVolume: Float = 0.75          // last 3 beeps: "3 seconds left" without looking at the screen
+let accentVolume: Float = 0.75          // the last accentLast beeps: "3 seconds left" without looking
+let accentLast = 3
+let cueVolume: Float = 0.65             // Submarine, the "look away now" opening cue
+let snoozeSeconds: TimeInterval = 3600
 let chimeNotes: [Double] = [698.46, 880.00, 1046.50, 1396.91]   // F5 A5 C6 F6 — F5 matches Tink's pitch
 let chimeIOI = 0.09, chimeTau = 0.09, chimeTailTau = 0.35
 let chimeGain: Float = 0.34
+let chimeDuration = chimeIOI * Double(chimeNotes.count - 1) + chimeTailTau * 4.5   // 1.845s with the defaults
 let chimeFormat = AVAudioFormat(standardFormatWithSampleRate: 48000, channels: 1)!
 
 // ===== Countdown state machine — ticks every 0.5s, 40 ticks = 20s =====
@@ -31,6 +37,9 @@ struct Countdown {
     var done: Bool { n >= Countdown.ticks }
 }
 
+// One source for the accent rule: tick() plays it, selfCheck() asserts on it.
+func beepLevel(_ b: Int) -> Float { b > Countdown.ticks / 2 - accentLast ? accentVolume : beepVolume }
+
 // ===== Chime: synthesized ascending arpeggio (no system sound is an ascending run) =====
 final class Chime {
     private let engine = AVAudioEngine()
@@ -41,12 +50,16 @@ final class Chime {
         engine.connect(node, to: engine.mainMixerNode, format: chimeFormat)
     }
 
-    func warmUp() { if !engine.isRunning { try? engine.start() } }
+    func warmUp() {
+        if !engine.isRunning {
+            do { try engine.start() } catch { NSLog("EyeBreak: audio engine start failed: \(error)") }
+        }
+    }
     func shutDown() { node.stop(); engine.stop() }
 
     static func buffer() -> AVAudioPCMBuffer {
         let sr = chimeFormat.sampleRate
-        let total = chimeIOI * Double(chimeNotes.count - 1) + chimeTailTau * 4.5
+        let total = chimeDuration
         let buf = AVAudioPCMBuffer(pcmFormat: chimeFormat, frameCapacity: AVAudioFrameCount(total * sr))!
         buf.frameLength = buf.frameCapacity
         let ch = buf.floatChannelData![0]
@@ -65,10 +78,13 @@ final class Chime {
         return buf
     }
 
-    func play() {
+    // False = the engine would not start; the caller falls back to an audible signal.
+    func play() -> Bool {
         warmUp()
+        guard engine.isRunning else { return false }
         node.scheduleBuffer(Chime.buffer(), completionHandler: nil)
         node.play()
+        return true
     }
 }
 
@@ -132,7 +148,7 @@ final class App: NSObject, NSApplicationDelegate {
     func schedule(_ seconds: TimeInterval) {
         mainTimer?.invalidate()
         let t = Timer(timeInterval: seconds, repeats: true) { [weak self] _ in self?.fire() }
-        t.tolerance = 60
+        t.tolerance = min(seconds / 20, 60)   // proportional: EYEBREAK_INTERVAL=5 must not slip by a minute
         RunLoop.main.add(t, forMode: .common)   // .common: keeps ticking while a menu is open
         mainTimer = t
     }
@@ -149,8 +165,9 @@ final class App: NSObject, NSApplicationDelegate {
     // One-shot: resume the normal cadence an hour later. (A repeating 3600s
     // timer would silently turn the app into an hourly reminder forever.)
     @objc func snooze() {
-        mainTimer?.invalidate()
-        let t = Timer(timeInterval: 3600, repeats: false) { [weak self] _ in self?.schedule(interval) }
+        if tickTimer != nil { endBreak(playedChime: false) }   // silence the break being snoozed away…
+        mainTimer?.invalidate()                                // …then drop the 20-min timer endBreak just set
+        let t = Timer(timeInterval: snoozeSeconds, repeats: false) { [weak self] _ in self?.schedule(interval) }
         t.tolerance = 60
         RunLoop.main.add(t, forMode: .common)
         mainTimer = t
@@ -160,29 +177,36 @@ final class App: NSObject, NSApplicationDelegate {
     // ===== Break =====
     @objc func startBreak() {
         guard tickTimer == nil else { return }
+        chime.shutDown()   // a break begun inside the previous hold window would inherit a stale output device
         countdown = Countdown()
         label.stringValue = "遠くを見て  20"
         showPanel()
-        cue?.volume = 0.65
+        cue?.volume = cueVolume
         cue?.play()
-        RegisterEventHotKey(UInt32(kVK_Escape), 0,
-                            EventHotKeyID(signature: OSType(0x4559_4542), id: 1),
-                            GetApplicationEventTarget(), 0, &hotKey)   // Esc is ours for these 20s only
+        let err = RegisterEventHotKey(UInt32(kVK_Escape), 0,
+                                      EventHotKeyID(signature: OSType(0x4559_4542), id: 1),
+                                      GetApplicationEventTarget(), 0, &hotKey)   // Esc is ours for these 20s only
+        if err != noErr { NSLog("EyeBreak: Esc hotkey registration failed (\(err)) — click the panel to dismiss") }
         let t = Timer(timeInterval: 0.5, repeats: true) { [weak self] _ in self?.tick() }
         RunLoop.main.add(t, forMode: .common)
         tickTimer = t
     }
 
     func tick() {
+        if screenUnavailable { endBreak(playedChime: false); return }   // locked/slept mid-break: stop beeping at it
         let s = countdown.next()
         if let b = s.beep {
             tink?.stop()
-            tink?.volume = b >= 18 ? accentVolume : beepVolume
+            tink?.volume = beepLevel(b)
             tink?.play()
         }
         if let l = s.label { label.stringValue = l > 0 ? "遠くを見て  \(l)" : "おつかれさま" }
         if s.warmUp { chime.warmUp() }
-        if s.chime { chime.play() }
+        if s.chime, !chime.play() {   // engine dead (device mid-switch etc.): end on a beep, not on silence
+            tink?.stop()
+            tink?.volume = accentVolume
+            tink?.play()
+        }
         if countdown.done {
             endBreak(playedChime: true)
         }
@@ -193,9 +217,11 @@ final class App: NSObject, NSApplicationDelegate {
     func endBreak(playedChime: Bool) {
         guard tickTimer != nil else { return }
         tickTimer?.invalidate(); tickTimer = nil
+        tink?.stop()
+        cue?.stop()   // the ~1.5s opening cue may still be sounding on an early dismiss/snooze
         if let h = hotKey { UnregisterEventHotKey(h); hotKey = nil }
         schedule(interval)   // the 20-minute clock counts from the end of the last break
-        let hold = playedChime ? 2.0 : 0.0   // > 1.845s: let the chime tail ring out
+        let hold = playedChime ? chimeDuration + 0.5 : 0.0   // tail + margin for output-device latency
         DispatchQueue.main.asyncAfter(deadline: .now() + hold) { [weak self] in
             guard let self, self.tickTimer == nil else { return }
             self.panel?.orderOut(nil)
@@ -253,6 +279,11 @@ final class App: NSObject, NSApplicationDelegate {
 
 // ===== Self-check =====
 func selfCheck() {
+    // Canary: with -O, swiftc strips assert()s and every check below would silently pass.
+    var assertsAlive = false
+    assert({ assertsAlive = true; return true }(), "")
+    if !assertsAlive { print("selfcheck FAILED: asserts compiled out — build without -O"); exit(1) }
+
     var c = Countdown()
     var beeps: [Int] = [], labels: [Int] = [], chimes = 0, warmUps = 0
     while !c.done {
@@ -263,24 +294,29 @@ func selfCheck() {
         if s.warmUp { warmUps += 1 }
         assert(!(s.beep != nil && s.chime), "beep and chime must never land on the same tick")
     }
-    assert(beeps == Array(1...20), "expected 20 beeps numbered 1...20, got \(beeps)")
-    assert(labels == Array((0...19).reversed()), "expected labels 19...0, got \(labels)")
+    let nBeeps = Countdown.ticks / 2
+    assert(beeps == Array(1...nBeeps), "expected \(nBeeps) beeps numbered 1...\(nBeeps), got \(beeps)")
+    assert(labels == Array((0...nBeeps - 1).reversed()), "expected labels \(nBeeps - 1)...0, got \(labels)")
     assert(chimes == 1 && warmUps == 1, "chime/warmUp must fire exactly once")
-    assert(beeps.filter { $0 >= 18 }.count == 3, "exactly the last 3 beeps are accented")
+    let accented = (1...nBeeps).filter { beepLevel($0) == accentVolume }
+    assert(accented == Array(nBeeps - accentLast + 1...nBeeps),
+           "accent is not on precisely the last \(accentLast) beeps: \(accented)")
 
     let b = Chime.buffer()
     let sr = chimeFormat.sampleRate, n = Int(b.frameLength)
     let s = UnsafeBufferPointer(start: b.floatChannelData![0], count: n)
-    assert(abs(Double(n) / sr - 1.845) < 0.02, "chime length drifted: \(Double(n) / sr)s")
+    assert(abs(Double(n) / sr - chimeDuration) < 0.02, "chime length drifted: \(Double(n) / sr)s")
     let peak = s.reduce(Float(0)) { max($0, abs($1)) }
-    assert(peak > 0.30 && peak < 0.55, "chime peak \(peak) — silent, clipping, or gain changed")
+    assert(peak / chimeGain > 0.9 && peak / chimeGain < 1.6, "chime peak \(peak) out of shape for gain \(chimeGain)")
+    assert(peak < 1.0, "chime clips: peak \(peak)")
     assert(abs(s[n - 1]) < 0.01, "chime is cut off before it decays (click)")
-    // Zero crossings over the first note only (2nd note starts at 90ms) => fundamental must be F5.
+    // Zero crossings over the first note only (the 2nd enters at chimeIOI) => fundamental must be chimeNotes[0].
     var zc = 0
-    let w = Int(0.08 * sr)
+    let win = 0.9 * chimeIOI
+    let w = Int(win * sr)
     for i in 1..<w where (s[i] < 0) != (s[i - 1] < 0) { zc += 1 }
-    let f0 = Double(zc) / (2 * 0.08)
-    assert(abs(f0 - 698.46) < 25, "first chime note is not F5: \(f0) Hz")
+    let f0 = Double(zc) / (2 * win)
+    assert(abs(f0 - chimeNotes[0]) < 25, "first chime note drifted from \(chimeNotes[0]) Hz: \(f0) Hz")
     assert(chimeNotes == chimeNotes.sorted(), "arpeggio must ascend")
 
     assert(NSSound(named: NSSound.Name("Tink")) != nil, "/System/Library/Sounds/Tink.aiff is missing")

@@ -1,12 +1,23 @@
 #!/bin/bash
-# Build, self-check, install and (re)start EyeBreak. Safe to re-run any time.
+# Build, self-check, install and (re)start EyeBreak. Safe to re-run any time:
+# the build and self-check run in a temp dir first, so a failure leaves the
+# installed app and its LaunchAgent completely untouched (and still running).
 set -e
 SRC="$(cd "$(dirname "$0")" && pwd)"
 APP="$HOME/Applications/EyeBreak.app"
 PLIST="$HOME/Library/LaunchAgents/com.user.eyebreak.plist"
 GUI="gui/$(id -u)"
 
-launchctl bootout "$GUI/com.user.eyebreak" 2>/dev/null || true   # stop the old copy first
+# no -O: asserts in selfCheck must survive (it verifies this itself), and the
+# app uses no measurable CPU anyway
+TMP="$(mktemp -d)"
+swiftc -o "$TMP/EyeBreak" "$SRC/main.swift"
+"$TMP/EyeBreak" --selfcheck            # set -e: nothing below runs if this fails
+
+# Only now touch the installed copy. Boot out the old agent BEFORE replacing
+# its binary: overwriting a running executable gets it SIGKILLed by
+# code-signature verification and KeepAlive resurrects it in a crash loop.
+launchctl bootout "$GUI/com.user.eyebreak" 2>/dev/null || true
 pkill -x EyeBreak 2>/dev/null || true
 
 mkdir -p "$APP/Contents/MacOS"
@@ -23,10 +34,7 @@ cat > "$APP/Contents/Info.plist" <<'EOF'
   <key>NSPrincipalClass</key><string>NSApplication</string>
 </dict></plist>
 EOF
-
-# no -O: asserts in selfCheck must survive, and this app uses no measurable CPU
-swiftc -o "$APP/Contents/MacOS/EyeBreak" "$SRC/main.swift"
-"$APP/Contents/MacOS/EyeBreak" --selfcheck     # set -e aborts the install if this fails
+mv -f "$TMP/EyeBreak" "$APP/Contents/MacOS/EyeBreak"
 
 cat > "$PLIST" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -42,7 +50,8 @@ EOF
 plutil -lint "$PLIST"
 
 launchctl enable "$GUI/com.user.eyebreak" 2>/dev/null || true
-launchctl bootstrap "$GUI" "$PLIST"
+# Retry once: bootout can still be draining the old job for a moment.
+launchctl bootstrap "$GUI" "$PLIST" || { sleep 2; launchctl bootstrap "$GUI" "$PLIST"; }
 sleep 1
 launchctl print "$GUI/com.user.eyebreak" | grep -E "^\s+(state|pid) "
 echo "OK — Dock に目のアイコンが出ていれば完了です"
