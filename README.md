@@ -31,6 +31,17 @@ Press <kbd>Esc</kbd> (or click the panel) to skip a break. Right-click the Dock
 icon for **Break now**, **Pause for 1 hour**, and **Quit** (quit lasts until
 your next login, then it comes back on its own).
 
+**Quiet hours: 23:00–06:00 every day**, using the Mac's local time.
+Notifications and audio stop at 23:00, including an ongoing break. “Break now”
+is also disabled during quiet hours. The app stays running and resumes at the
+next regular timer check after 06:00.
+
+**Breaks never interrupt a Zoom meeting.** While a Zoom call is in progress the
+panel and the sounds stay away — including a break already counting down, and
+including **Break now**. Merely having the Zoom client open does not count; only
+an actual meeting does. The normal 20-minute cadence resumes by itself at the
+next timer check after you leave the meeting.
+
 ## Install
 
 Requires macOS with the Xcode Command Line Tools (`xcode-select --install`).
@@ -91,6 +102,17 @@ Decisions an engineer might wonder about:
   half-second during a break, so locking mid-break stops the remaining beeps.
   That's the *only* idle handling; deliberate non-features are listed below.
 
+- **A Zoom meeting suppresses breaks, detected by process, not by window.**
+  `zoom.us` launches the helper app `us.zoom.CptHost` for the lifetime of a
+  meeting and quits it when the meeting ends, so watching for that bundle ID in
+  `NSWorkspace.runningApplications` distinguishes "in a call" from "client idle
+  in the Dock" — the latter must not silence the app all day. Two alternatives
+  were rejected because both cost a permission prompt this app has never
+  needed: window titles (`kCGWindowName`, Screen Recording) and microphone
+  state. Failure mode is the safe one — if a future Zoom version drops the
+  helper, breaks keep firing rather than going silent. Like the sleep/lock
+  check, it re-runs every half-second, so joining a call mid-break ends it.
+
 - **A Dock tile, not a menu bar item.** No `LSUIElement` in `Info.plist`, so
   the app is a regular one; the menu is served by `applicationDockMenu` and the
   icon is *drawn at launch* from the `eye` SF Symbol onto a rounded tile, so
@@ -149,6 +171,7 @@ EYEBREAK_INTERVAL=5 ~/Applications/EyeBreak.app/Contents/MacOS/EyeBreak
 - No Focus-mode integration (no public API; every workaround breaks across
   macOS updates)
 - No idle detection beyond display-sleep/lock (which absorbs the real cases)
+- No meeting detection beyond Zoom, and no setting to turn it off
 - No preferences window, statistics, or history — the knobs are the named
   constants at the top of `main.swift`
 

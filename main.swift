@@ -18,6 +18,22 @@ let chimeGain: Float = 0.34
 let chimeDuration = chimeIOI * Double(chimeNotes.count - 1) + chimeTailTau * 4.5   // 1.845s with the defaults
 let chimeFormat = AVAudioFormat(standardFormatWithSampleRate: 48000, channels: 1)!
 
+// Quiet hours follow the Mac's current local time, including time-zone changes.
+func isQuietHours(at date: Date = Date(), calendar: Calendar = .current) -> Bool {
+    let hour = calendar.component(.hour, from: date)
+    return hour >= 23 || hour < 6
+}
+
+// A Zoom meeting must never be interrupted. zoom.us launches us.zoom.CptHost for the
+// duration of a meeting and quits it when the meeting ends, so this suppresses breaks
+// only during calls — the client sitting idle in the Dock all day must not silence the
+// app. Pure, so selfCheck exercises it without Zoom installed.
+let zoomMeetingBundleIDs: Set<String> = ["us.zoom.CptHost"]
+
+func isZoomMeeting(running bundleIDs: [String]) -> Bool {
+    bundleIDs.contains { zoomMeetingBundleIDs.contains($0) }
+}
+
 // ===== Countdown state machine — ticks every 0.5s, 40 ticks = 20s =====
 // odd tick  -> beep (t = 0.5, 1.5, ... 19.5), 20 beeps
 // even tick -> label update (t = 1.0, 2.0, ... 20.0), 19 down to 0
@@ -94,7 +110,7 @@ final class App: NSObject, NSApplicationDelegate {
     let tink = NSSound(named: NSSound.Name("Tink"))
     let cue = NSSound(named: NSSound.Name("Submarine"))
     let label = NSTextField(labelWithString: "")
-    var mainTimer: Timer?, tickTimer: Timer?
+    var mainTimer: Timer?, tickTimer: Timer?, quietTimer: Timer?
     var panel: NSPanel?
     var hotKey: EventHotKeyRef?
     var countdown = Countdown()
@@ -127,6 +143,13 @@ final class App: NSObject, NSApplicationDelegate {
         NSApp.mainMenu = bar
 
         installHotKeyHandler()
+        scheduleQuietBoundary()
+        NotificationCenter.default.addObserver(self, selector: #selector(refreshQuietHours),
+                                               name: .NSSystemTimeZoneDidChange, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(refreshQuietHours),
+                                               name: .NSSystemClockDidChange, object: nil)
+        NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(refreshQuietHours),
+                                                          name: NSWorkspace.didWakeNotification, object: nil)
         schedule(interval)
     }
 
@@ -160,7 +183,40 @@ final class App: NSObject, NSApplicationDelegate {
         return session?["CGSSessionScreenIsLocked"] as? Bool ?? false
     }
 
-    func fire() { if !screenUnavailable { startBreak() } }
+    // NSWorkspace lists LSUIElement helpers like CptHost and needs no permission —
+    // reading window titles (Screen Recording) or the mic state would.
+    var zoomMeetingActive: Bool {
+        isZoomMeeting(running: NSWorkspace.shared.runningApplications.compactMap(\.bundleIdentifier))
+    }
+
+    // Every reason to hold a break back, checked before one starts and on every tick.
+    var breakSuppressed: Bool { isQuietHours() || screenUnavailable || zoomMeetingActive }
+
+    func fire() { startBreak() }   // startBreak() honours breakSuppressed itself
+
+    // Also stop a chime whose tail crosses 23:00, after the countdown timer has ended.
+    @objc func refreshQuietHours() {
+        if isQuietHours() {
+            endBreak(playedChime: false)
+            tink?.stop()
+            cue?.stop()
+            chime.shutDown()
+            panel?.orderOut(nil)
+        }
+        scheduleQuietBoundary()
+    }
+
+    func scheduleQuietBoundary() {
+        quietTimer?.invalidate()
+        guard let next = Calendar.current.nextDate(after: Date(),
+                                                   matching: DateComponents(hour: 23),
+                                                   matchingPolicy: .nextTime) else { return }
+        let t = Timer(fire: next, interval: 0, repeats: false) { [weak self] _ in
+            self?.refreshQuietHours()
+        }
+        RunLoop.main.add(t, forMode: .common)
+        quietTimer = t
+    }
 
     // One-shot: resume the normal cadence an hour later. (A repeating 3600s
     // timer would silently turn the app into an hourly reminder forever.)
@@ -176,7 +232,7 @@ final class App: NSObject, NSApplicationDelegate {
 
     // ===== Break =====
     @objc func startBreak() {
-        guard tickTimer == nil else { return }
+        guard tickTimer == nil, !breakSuppressed else { return }
         chime.shutDown()   // a break begun inside the previous hold window would inherit a stale output device
         countdown = Countdown()
         label.stringValue = "遠くを見て  20"
@@ -193,7 +249,7 @@ final class App: NSObject, NSApplicationDelegate {
     }
 
     func tick() {
-        if screenUnavailable { endBreak(playedChime: false); return }   // locked/slept mid-break: stop beeping at it
+        if breakSuppressed { endBreak(playedChime: false); return }   // locked/slept/quiet/meeting mid-break: stop beeping at it
         let s = countdown.next()
         if let b = s.beep {
             tink?.stop()
@@ -283,6 +339,20 @@ func selfCheck() {
     var assertsAlive = false
     assert({ assertsAlive = true; return true }(), "")
     if !assertsAlive { print("selfcheck FAILED: asserts compiled out — build without -O"); exit(1) }
+
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = TimeZone(identifier: "Asia/Tokyo")!
+    for (hour, minute, second, quiet) in [(22, 59, 59, false), (23, 0, 0, true),
+                                        (0, 0, 0, true), (5, 59, 59, true), (6, 0, 0, false)] {
+        let date = calendar.date(from: DateComponents(year: 2026, month: 9, day: 8,
+                                                      hour: hour, minute: minute, second: second))!
+        assert(isQuietHours(at: date, calendar: calendar) == quiet, "quiet-hours boundary failed: \(hour):\(minute):\(second)")
+    }
+
+    assert(isZoomMeeting(running: []) == false, "no apps must not read as a meeting")
+    assert(isZoomMeeting(running: ["us.zoom.xos", "com.apple.Safari"]) == false,
+           "the idle Zoom client must not read as a meeting")
+    assert(isZoomMeeting(running: ["us.zoom.xos", "us.zoom.CptHost"]), "CptHost means a meeting is running")
 
     var c = Countdown()
     var beeps: [Int] = [], labels: [Int] = [], chimes = 0, warmUps = 0

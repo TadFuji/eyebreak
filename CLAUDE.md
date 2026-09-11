@@ -63,8 +63,8 @@ Layout of `main.swift`, top to bottom:
   `-O`), beep count/order, label sequence, beep/chime non-collision, the
   accent rule (via `beepLevel`, the same function `tick()` plays), buffer
   length, peak shape and clipping, tail decay, a zero-crossing measurement of
-  the first chime note, the presence of the system sounds, and the drawn Dock
-  icon. Expected values are derived from the Knobs, so tuning them does not
+  the first chime note, the quiet-hours and Zoom-meeting predicates, the
+  presence of the system sounds, and the drawn Dock icon. Expected values are derived from the Knobs, so tuning them does not
   break the gate.
 
 ## Load-bearing decisions — do not regress these
@@ -96,6 +96,16 @@ Layout of `main.swift`, top to bottom:
   (`CGDisplayIsAsleep` / `CGSSessionScreenIsLocked`), and `tick()` re-checks,
   so a mid-break lock stops the remaining beeps. This is the only idle
   handling; further idle detection is a deliberate non-feature (see README).
+- **Every suppression rule lives in `breakSuppressed`** (quiet hours, sleep/lock,
+  Zoom meeting), read by both `startBreak()`'s guard and every `tick()`. Add new
+  rules there, not at the call sites, or "Break now" and mid-break checks drift.
+- **A Zoom meeting is detected by the helper bundle ID `us.zoom.CptHost`**, which
+  `zoom.us` runs only for the duration of a meeting — an idle client in the Dock
+  must not silence the app all day. `NSWorkspace.runningApplications` lists
+  LSUIElement helpers and costs no permission; window titles (`kCGWindowName`)
+  and microphone state were rejected because both prompt. If Zoom drops the
+  helper, the app keeps firing breaks rather than going silent — keep that
+  direction of failure. `isZoomMeeting(running:)` is pure, for `selfCheck()`.
 - **Dock tile, not a status item.** `Info.plist` carries no `LSUIElement`, so
   the app is `.regular` — no `setActivationPolicy` call needed. `buildMenu()`
   returns a fresh `NSMenu` every time (an `NSMenu` has exactly one supermenu,
