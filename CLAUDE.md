@@ -63,7 +63,7 @@ Layout of `main.swift`, top to bottom:
   `-O`), beep count/order, label sequence, beep/chime non-collision, the
   accent rule (via `beepLevel`, the same function `tick()` plays), buffer
   length, peak shape and clipping, tail decay, a zero-crossing measurement of
-  the first chime note, the quiet-hours and Zoom-meeting predicates, the
+  the first chime note, the quiet-hours and Zoom-meeting predicates, the single-instance lock, the
   presence of the system sounds, and the drawn Dock icon. Expected values are derived from the Knobs, so tuning them does not
   break the gate.
 
@@ -119,6 +119,14 @@ Layout of `main.swift`, top to bottom:
 - **LaunchAgent `KeepAlive = {SuccessfulExit: false}`**: crash → auto-restart,
   menu Quit → stays quit until next login. A plain `true` makes the app
   unkillable from its own menu.
+- **Single instance via `flock`** on
+  `~/Library/Application Support/EyeBreak/instance.lock`, taken at entry
+  (after `--selfcheck`, so `build.sh` can self-check while the app runs). The
+  loser must `exit(0)` — a non-zero exit under the LaunchAgent's KeepAlive
+  respawns it forever. A Login Item on top of the LaunchAgent once started two
+  copies at every login (removed 2026-10-06); start-at-login is the
+  LaunchAgent only. Running `/tmp/eyebreak` while the agent is up now exits
+  immediately — boot the agent out first, as in Commands.
 - The panel's origin is recomputed on every break — display arrangements
   change between breaks; never cache an `NSScreen`.
 

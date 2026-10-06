@@ -128,6 +128,13 @@ Decisions an engineer might wonder about:
   plain `KeepAlive = true`, launchd resurrects the app the instant you quit
   it — the classic "unkillable app" bug.
 
+- **Only one copy ever runs.** At launch the app takes an exclusive `flock` on
+  `~/Library/Application Support/EyeBreak/instance.lock`; a second copy (say, a
+  Login Item added on top of the LaunchAgent, or a Finder double-click) exits
+  quietly with status 0, so `KeepAlive` doesn't respawn it. The kernel drops
+  the lock when the process dies, so a crash never leaves it stale. Use only the
+  LaunchAgent for start-at-login — don't also add EyeBreak to Login Items.
+
 - **The 20-minute clock restarts at the end of every break**, so a manual
   break or an Esc-skip never collides with the old cycle phase. "Pause for
   1 hour" is a one-shot: it resumes the normal 20-minute cadence an hour

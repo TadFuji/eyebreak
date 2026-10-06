@@ -34,6 +34,26 @@ func isZoomMeeting(running bundleIDs: [String]) -> Bool {
     bundleIDs.contains { zoomMeetingBundleIDs.contains($0) }
 }
 
+// ===== Single instance =====
+// One copy only, however it was started (the LaunchAgent, a stray Login Item, a Finder
+// double-click). flock is atomic, so two copies starting at the same instant can't both
+// win, and the kernel drops the lock when the process dies, so a crash never leaves it stale.
+let instanceLockPath = FileManager.default.homeDirectoryForCurrentUser
+    .appendingPathComponent("Library/Application Support/EyeBreak/instance.lock").path
+
+// true = this process is the one copy. The fd is deliberately never closed: the lock
+// lives exactly as long as the process. If the lock file can't be opened, run anyway —
+// a duplicate is better than a silent app.
+func acquireInstanceLock(at path: String) -> Bool {
+    try? FileManager.default.createDirectory(atPath: (path as NSString).deletingLastPathComponent,
+                                             withIntermediateDirectories: true)
+    let fd = open(path, O_CREAT | O_RDWR | O_CLOEXEC, 0o644)
+    guard fd >= 0 else { return true }
+    if flock(fd, LOCK_EX | LOCK_NB) == 0 { return true }
+    close(fd)
+    return false
+}
+
 // ===== Countdown state machine — ticks every 0.5s, 40 ticks = 20s =====
 // odd tick  -> beep (t = 0.5, 1.5, ... 19.5), 20 beeps
 // even tick -> label update (t = 1.0, 2.0, ... 20.0), 19 down to 0
@@ -354,6 +374,14 @@ func selfCheck() {
            "the idle Zoom client must not read as a meeting")
     assert(isZoomMeeting(running: ["us.zoom.xos", "us.zoom.CptHost"]), "CptHost means a meeting is running")
 
+    // flock locks belong to the open file, so a second open() in this same process
+    // conflicts exactly like a second app instance would.
+    let lockDir = FileManager.default.temporaryDirectory.appendingPathComponent("eyebreak-selfcheck-\(getpid())")
+    let lockPath = lockDir.appendingPathComponent("sub/instance.lock").path
+    assert(acquireInstanceLock(at: lockPath), "first instance must get the lock (and create its directory)")
+    assert(!acquireInstanceLock(at: lockPath), "second instance must be refused")
+    try? FileManager.default.removeItem(at: lockDir)
+
     var c = Countdown()
     var beeps: [Int] = [], labels: [Int] = [], chimes = 0, warmUps = 0
     while !c.done {
@@ -408,6 +436,12 @@ func selfCheck() {
 // ===== Entry =====
 if CommandLine.arguments.contains("--selfcheck") {
     selfCheck()
+    exit(0)
+}
+// Exit 0, not 1: the LaunchAgent's KeepAlive {SuccessfulExit: false} would respawn a
+// failing duplicate in a loop.
+guard acquireInstanceLock(at: instanceLockPath) else {
+    FileHandle.standardError.write("EyeBreak is already running — exiting\n".data(using: .utf8)!)
     exit(0)
 }
 let delegate = App()
