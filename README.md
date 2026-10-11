@@ -100,6 +100,10 @@ Decisions an engineer might wonder about:
   (`CGDisplayIsAsleep`, `CGSessionCopyCurrentDictionary`) — nobody needs
   20 beeps aimed at a dark screen at 2 a.m. The same check runs every
   half-second during a break, so locking mid-break stops the remaining beeps.
+  When the screen comes back (display wake, system wake, or unlock), the
+  20-minute clock starts over from that moment — time away from the screen
+  already rested your eyes, so the next break comes 20 minutes after you
+  return, not a few minutes later. An active one-hour pause is left alone.
   That's the *only* idle handling; deliberate non-features are listed below.
 
 - **A Zoom meeting suppresses breaks, detected by process, not by window.**

@@ -63,7 +63,7 @@ Layout of `main.swift`, top to bottom:
   `-O`), beep count/order, label sequence, beep/chime non-collision, the
   accent rule (via `beepLevel`, the same function `tick()` plays), buffer
   length, peak shape and clipping, tail decay, a zero-crossing measurement of
-  the first chime note, the quiet-hours and Zoom-meeting predicates, the single-instance lock, the
+  the first chime note, the quiet-hours, Zoom-meeting and screen-return predicates, the single-instance lock, the
   presence of the system sounds, and the drawn Dock icon. Expected values are derived from the Knobs, so tuning them does not
   break the gate.
 
@@ -94,7 +94,11 @@ Layout of `main.swift`, top to bottom:
   immediately overwrite the snooze timer with the 20-minute clock.
 - **Breaks are skipped when the display is asleep or the screen is locked**
   (`CGDisplayIsAsleep` / `CGSSessionScreenIsLocked`), and `tick()` re-checks,
-  so a mid-break lock stops the remaining beeps. This is the only idle
+  so a mid-break lock stops the remaining beeps. When the screen returns
+  (`screensDidWake`, `didWake`, distributed `com.apple.screenIsUnlocked`),
+  `screenReturned()` restarts the 20-minute clock — except mid-break or while
+  `snoozed` (waking must not cut a snooze short; the rule is the pure
+  `restartsClockOnScreenReturn`). This is the only idle
   handling; further idle detection is a deliberate non-feature (see README).
 - **Every suppression rule lives in `breakSuppressed`** (quiet hours, sleep/lock,
   Zoom meeting), read by both `startBreak()`'s guard and every `tick()`. Add new

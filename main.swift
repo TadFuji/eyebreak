@@ -34,6 +34,14 @@ func isZoomMeeting(running bundleIDs: [String]) -> Bool {
     bundleIDs.contains { zoomMeetingBundleIDs.contains($0) }
 }
 
+// The screen coming back (display wake, system wake, unlock) means the eyes were off it,
+// so the 20-minute clock starts over from that moment instead of firing minutes later.
+// Not mid-break (that break already ends itself) and not while snoozed — waking the
+// screen must not cut an hour's snooze short. Pure, for selfCheck.
+func restartsClockOnScreenReturn(breakRunning: Bool, snoozed: Bool) -> Bool {
+    !breakRunning && !snoozed
+}
+
 // ===== Single instance =====
 // One copy only, however it was started (the LaunchAgent, a stray Login Item, a Finder
 // double-click). flock is atomic, so two copies starting at the same instant can't both
@@ -133,6 +141,7 @@ final class App: NSObject, NSApplicationDelegate {
     var mainTimer: Timer?, tickTimer: Timer?, quietTimer: Timer?
     var panel: NSPanel?
     var hotKey: EventHotKeyRef?
+    var snoozed = false   // true only while snooze()'s one-shot is pending
     var countdown = Countdown()
 
     // Drawn, not bundled — the app ships no assets. Static/pure like Chime.buffer(),
@@ -170,6 +179,12 @@ final class App: NSObject, NSApplicationDelegate {
                                                name: .NSSystemClockDidChange, object: nil)
         NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(refreshQuietHours),
                                                           name: NSWorkspace.didWakeNotification, object: nil)
+        for name in [NSWorkspace.screensDidWakeNotification, NSWorkspace.didWakeNotification] {
+            NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(screenReturned),
+                                                              name: name, object: nil)
+        }
+        DistributedNotificationCenter.default().addObserver(self, selector: #selector(screenReturned),
+                                                            name: .init("com.apple.screenIsUnlocked"), object: nil)
         schedule(interval)
     }
 
@@ -194,6 +209,13 @@ final class App: NSObject, NSApplicationDelegate {
         t.tolerance = min(seconds / 20, 60)   // proportional: EYEBREAK_INTERVAL=5 must not slip by a minute
         RunLoop.main.add(t, forMode: .common)   // .common: keeps ticking while a menu is open
         mainTimer = t
+        snoozed = false
+    }
+
+    @objc func screenReturned() {
+        guard restartsClockOnScreenReturn(breakRunning: tickTimer != nil, snoozed: snoozed) else { return }
+        schedule(interval)
+        NSLog("EyeBreak: screen back — 20-minute clock restarted")
     }
 
     // Nobody is looking at a dark or locked screen — skip rather than beep 20 times at it.
@@ -247,6 +269,7 @@ final class App: NSObject, NSApplicationDelegate {
         t.tolerance = 60
         RunLoop.main.add(t, forMode: .common)
         mainTimer = t
+        snoozed = true   // after endBreak's schedule() above cleared it
     }
     @objc func quit() { NSApp.terminate(nil) }
 
@@ -373,6 +396,10 @@ func selfCheck() {
     assert(isZoomMeeting(running: ["us.zoom.xos", "com.apple.Safari"]) == false,
            "the idle Zoom client must not read as a meeting")
     assert(isZoomMeeting(running: ["us.zoom.xos", "us.zoom.CptHost"]), "CptHost means a meeting is running")
+
+    assert(restartsClockOnScreenReturn(breakRunning: false, snoozed: false), "screen return must restart the clock")
+    assert(!restartsClockOnScreenReturn(breakRunning: false, snoozed: true), "screen return must not cut a snooze short")
+    assert(!restartsClockOnScreenReturn(breakRunning: true, snoozed: false), "screen return must not restart mid-break")
 
     // flock locks belong to the open file, so a second open() in this same process
     // conflicts exactly like a second app instance would.
